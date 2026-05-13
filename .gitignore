@@ -1,1 +1,3 @@
-/.cache
+# Ignore local folders
+.cache/
+spec/.local/
