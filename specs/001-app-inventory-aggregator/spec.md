@@ -132,7 +132,7 @@ The system tracks where each piece of application data originated. When the same
 - **FR-004**: System MUST provide a read-only user interface that displays the consolidated application inventory with search, filter, and sort capabilities.
 - **FR-005**: System MUST provide an API that allows authenticated clients with maintainer or administrator roles to create and update application records.
 - **FR-006**: System MUST provide an MCP server that exposes tools for querying and updating the application inventory.
-- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown), data sources, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
+- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, section, Jira category, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown/maintenance), data sources, data quality, confidence tier, last deployment date, last commit date, recent Jira activity (90d/365d), collected at date, created at, updated at, row version, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
 - **FR-008**: System MUST validate that required fields are provided when creating or updating application records and return clear error messages for invalid submissions.
 - **FR-009**: System MUST track the data source origin for each application record and field update.
 - **FR-010**: System MUST update the "last activity" timestamp whenever an application record is modified.
@@ -171,13 +171,13 @@ The system tracks where each piece of application data originated. When the same
 ### Measurable Outcomes
 
 - **SC-001**: Users can find any application in the inventory within 30 seconds using search or filters.
-- **SC-002**: The system supports at least 5,000 application records without noticeable performance degradation for end users.
+- **SC-002**: The system supports at least 5,000 application records with search returning results in < 500ms and API responses resolving in < 200ms p95.
 - **SC-003**: API-driven inventory updates are reflected in the read-only UI within 5 seconds of submission.
 - **SC-004**: 95% of authenticated users can successfully navigate to an application's detail page on their first attempt without assistance.
 - **SC-005**: The system can ingest updates from at least 10 distinct data sources simultaneously without errors.
 - **SC-006**: Pre-provisioned employees can access the inventory and find relevant applications within 2 minutes of their first login (no training required beyond SSO authentication). Administrators can pre-populate a new user account in under 1 minute.
 - **SC-007**: Administrators can assign or change a user role in under 1 minute.
-- **SC-008**: The system maintains 99.5% availability during business hours.
+- **SC-008**: The system maintains 99.5% availability during business hours (08:00 to 18:00 PT, Monday-Friday).
 
 ## Assumptions
 

@@ -257,17 +257,15 @@
 
 **Purpose**: Deployment, CI/CD, performance, security hardening, and final validation.
 
-- [ ] T113 [P] Create Azure DevOps pipeline in azure-pipelines.yml (build, test, publish self-contained win-x64, artifact upload)
-- [ ] T114 [P] Finalize deploy/install.ps1 with IIS site creation, app pool configuration, service installation, and database migration execution
-- [ ] T115 [P] Implement health check endpoints in src/Jarvis.Api/Controllers/HealthController.cs: GET /health (liveness), GET /health/ready (SQL Server connectivity + schema validation)
-- [ ] T116 [P] Add Swagger/OpenAPI documentation configuration in src/Jarvis.Api/Program.cs with endpoint descriptions and example responses
-- [ ] T117 [P] Add response caching for GET /applications list and GET /technologies/suggest in src/Jarvis.Api/Program.cs (short cache, invalidated on writes)
-- [ ] T118 [P] Add database query performance indexes verification: ensure all indexes from data-model.md are present in the migration
-- [ ] T119 Configure Blazor WASM publishing to include compiled output in API wwwroot (MapFallbackToFile in src/Jarvis.Api/Program.cs for SPA routing)
-- [ ] T120 Add rate limiting middleware for API endpoints in src/Jarvis.Api/Program.cs (protect against abuse)
-- [ ] T121 Security hardening: ensure HTTPS enforcement, HSTS headers, anti-forgery for state-changing operations, CORS restricted to same origin
-- [ ] T122 Run quickstart.md validation: verify clone, restore, migrate, run flow works end-to-end on a clean machine
-- [ ] T123 Create sample-data.json at repository root with representative test applications for the bulk import endpoint
+- [ ] T113 [P] Implement health check endpoints in src/Jarvis.Api/Controllers/HealthController.cs: GET /health (liveness), GET /health/ready (SQL Server connectivity + schema validation)
+- [ ] T114 [P] Add Swagger/OpenAPI documentation configuration in src/Jarvis.Api/Program.cs with endpoint descriptions and example responses
+- [ ] T115 [P] Add database query performance indexes verification: ensure all indexes from data-model.md are present in the migration
+- [ ] T116 Configure Blazor WASM publishing to include compiled output in API wwwroot (MapFallbackToFile in src/Jarvis.Api/Program.cs for SPA routing)
+- [ ] T117 Security hardening: ensure HTTPS enforcement, HSTS headers, anti-forgery for state-changing operations, CORS restricted to same origin
+- [ ] T118 Run quickstart.md validation: verify clone, restore, migrate, run flow works end-to-end on a clean machine
+- [ ] T119 Create sample-data.json at repository root with representative test applications for the bulk import endpoint
+- [ ] T120 [P] Create load test simulating 5,000 application records to verify search results < 500ms and API response < 200ms p95
+- [ ] T121 [P] Create concurrency integration test simulating 10 distinct data sources updating applications simultaneously
 
 **Checkpoint**: Application is production-ready. CI/CD pipeline builds and tests. Deployment script installs on Windows Server 2025. All endpoints secured and performant.
 
