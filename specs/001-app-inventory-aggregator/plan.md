@@ -6,25 +6,25 @@
 
 ## Summary
 
-Build an application inventory aggregator that consolidates data from multiple sources into a searchable, read-only web UI. Updates flow exclusively through a REST API and an MCP server. The system uses .NET 10, Blazor WebAssembly for the frontend, a minimal ASP.NET Core API backend, SQLite with WAL mode for storage, KeyCloak for SSO/OIDC authentication, and deploys to BC Government OpenShift Gold. Role-based access control (admin/maintainer/reader) governs who can view or modify inventory data.
+Build an application inventory aggregator that consolidates data from multiple sources into a searchable, read-only web UI. Updates flow exclusively through a REST API and an MCP server. The system uses .NET 10, Blazor WebAssembly for the frontend, an ASP.NET Core API backend, SQL Server 2019 for storage, KeyCloak for SSO/OIDC authentication, and deploys to a single Windows Server 2025 VM. Role-based access control (admin/maintainer/reader) governs who can view or modify inventory data. Self-service Personal Access Tokens enable API and MCP access.
 
 ## Technical Context
 
 **Language/Version**: .NET 10 (C# 14)
 
-**Primary Dependencies**: ASP.NET Core 10, Blazor WebAssembly (standalone), Entity Framework Core 10 (SQLite provider), Microsoft.AspNetCore.Authentication.OpenIdConnect (KeyCloak OIDC), ModelContextProtocol SDK for .NET (Streamable HTTP transport), FluentValidation, Litestream (sidecar/entrypoint binary for SQLite replication), KubernetesClient (for Lease-based leader election)
+**Primary Dependencies**: ASP.NET Core 10, Blazor WebAssembly (standalone), Entity Framework Core 10 (SQL Server provider), Microsoft.AspNetCore.Authentication.OpenIdConnect (KeyCloak OIDC), ModelContextProtocol SDK for .NET (Streamable HTTP transport), FluentValidation, Serilog (File + EventLog sinks)
 
-**Storage**: SQLite with WAL mode embedded in each API pod. Litestream replicates WAL segments to a shared RWX PVC. Kubernetes Lease-based leader election designates one pod as the single writer.
+**Storage**: SQL Server 2019 (production), LocalDB (development)
 
-**Testing**: xUnit, bUnit (Blazor component tests), Microsoft.AspNetCore.Mvc.Testing (integration tests), Verify (snapshot testing for contracts)
+**Testing**: xUnit, bUnit (Blazor component tests), Microsoft.AspNetCore.Mvc.Testing (integration tests with LocalDB), Verify (snapshot testing for contracts)
 
-**Target Platform**: Linux containers on BC Government OpenShift Gold (OKD/Kubernetes)
+**Target Platform**: Windows Server 2025, IIS reverse proxy or Windows Service (Kestrel)
 
 **Project Type**: Web application (Blazor WASM frontend + ASP.NET Core API backend + MCP server)
 
 **Performance Goals**: Search results < 500ms, API response < 200ms p95, UI first contentful paint < 2s
 
-**Constraints**: Multi-pod deployment with PodDisruptionBudget (minAvailable: 1) on ALL Deployments, minimum 2 API replicas, all traffic through HTTP proxy (OpenShift router), < 512MB memory per pod, no external S3, all storage within namespace
+**Constraints**: Single-server deployment, SQL Server 2019 (existing on the VM), LocalDB for zero-dependency local dev, no container orchestration
 
 **Scale/Scope**: ~5000 application records, ~50 concurrent users, 3 user roles, ~10 data source integrations
 
@@ -34,11 +34,11 @@ Build an application inventory aggregator that consolidates data from multiple s
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| I. Data Security | PASS | Secrets via env vars (KeyCloak client secret). No PII in logs (structured logging with masking). .gitignore excludes .env, appsettings.Development.json. |
-| II. Simplicity First | PASS | Single solution with 3 projects (API+MCP, Blazor WASM, Shared). Embedded SQLite — zero database pods. No repository pattern abstraction — direct EF Core DbContext. |
+| I. Data Security | PASS | Secrets via env vars or appsettings (excluded from git). KeyCloak client secret not in source control. No PII in logs (structured logging with masking). .gitignore excludes appsettings.Development.json. |
+| II. Simplicity First | PASS | Single solution with 3 projects (API+MCP, Blazor WASM, Shared). SQL Server already on the VM — no additional infrastructure. No repository pattern — direct EF Core DbContext. |
 | III. Adaptability | PASS | Loose coupling via clean service interfaces. EF Core allows DB swap later. MCP hosted as HTTP middleware in API. Blazor WASM decoupled from API via HTTP client. |
 | IV. Regression Safety | PASS | xUnit + bUnit + integration tests. CI pipeline gates on test pass. Acceptance scenarios from spec map directly to integration tests. |
-| V. Ease of Use | PASS | Docker Compose for local dev. Clear API error messages with ProblemDetails. BC Design System styling for consistent UX. Minimal setup: clone, docker-compose up. |
+| V. Ease of Use | PASS | LocalDB for zero-dependency local dev. Clear API error messages with ProblemDetails. BC Design System styling for consistent UX. Minimal setup: clone, dotnet ef database update, dotnet run. |
 
 **Gate Result**: PASS - No violations. Proceed to Phase 0.
 
@@ -46,11 +46,11 @@ Build an application inventory aggregator that consolidates data from multiple s
 
 | Principle | Status | Post-Design Assessment |
 |-----------|--------|------------------------|
-| I. Data Security | PASS | KeyCloak secrets in env vars / OpenShift Secrets. SQLite on local emptyDir (not network-exposed). Serilog with PII masking. .gitignore blocks appsettings.Development.json. JWT tokens validated server-side; no secrets in WASM client. |
-| II. Simplicity First | PASS | 3 projects is the minimum for clean separation (API+MCP, WASM, Shared). Embedded SQLite — zero database pods, zero operators. No repository pattern — direct EF Core. No event sourcing. BC Design tokens reused rather than wrapping React. Single Deployment for the entire app. |
-| III. Adaptability | PASS | EF Core provider swap is a NuGet + connection string change. MCP transport can switch between HTTP and stdio via configuration. WASM frontend decoupled from API. Field-level provenance allows data source changes without model changes. Leader election is a BackgroundService — removable if storage changes. |
+| I. Data Security | PASS | KeyCloak secrets in appsettings.Production.json (excluded from git) or Windows environment variables. SQL Server connection string uses Windows Authentication where possible. Serilog with PII masking. .gitignore blocks appsettings.Development.json. JWT tokens validated server-side; no secrets in WASM client. |
+| II. Simplicity First | PASS | 3 projects is the minimum for clean separation (API+MCP, WASM, Shared). SQL Server already on the VM — zero additional infrastructure. No repository pattern — direct EF Core. No event sourcing. BC Design tokens reused rather than wrapping React. Single process deployment. |
+| III. Adaptability | PASS | EF Core provider swap is a NuGet + connection string change. MCP transport can switch between HTTP and stdio via configuration. WASM frontend decoupled from API. Field-level provenance allows data source changes without model changes. |
 | IV. Regression Safety | PASS | xUnit for API logic, bUnit for Blazor components, integration tests with WebApplicationFactory. Acceptance scenarios from spec map to test cases. CI gates on test pass. |
-| V. Ease of Use | PASS | docker compose up for full local stack. ProblemDetails errors with corrective suggestions. Health endpoints for ops. Quickstart documented. Minimal env vars with safe defaults. |
+| V. Ease of Use | PASS | LocalDB for zero-dependency dev: clone, restore, run. ProblemDetails errors with corrective suggestions. Health endpoints for monitoring. Quickstart documented. Self-contained publish for simple deployment. |
 
 **Post-Design Gate Result**: PASS - No violations introduced during design phase.
 
@@ -79,9 +79,8 @@ src/
 │   ├── Services/                  # Business logic services
 │   ├── Infrastructure/            # EF Core DbContext, migrations, config
 │   ├── Authentication/            # Dual-mode auth (KeyCloak JWT + PAT), role resolution
-│   ├── Middleware/                # Error handling, logging, write-forwarding proxy
+│   ├── Middleware/                # Error handling, logging
 │   ├── Mcp/                      # MCP tool definitions (Streamable HTTP)
-│   ├── Leadership/               # Kubernetes Lease leader election + Litestream coordination
 │   ├── Program.cs
 │   └── Jarvis.Api.csproj
 │
@@ -105,37 +104,24 @@ tests/
 ├── Jarvis.Api.Tests/              # API unit + integration tests
 │   ├── Controllers/
 │   ├── Services/
-│   ├── Leadership/                # Leader election + write-forwarding tests
-│   └── Integration/
+│   └── Integration/               # Uses LocalDB
 ├── Jarvis.Web.Tests/              # Blazor component tests (bUnit)
 │   └── Components/
 └── Jarvis.Mcp.Tests/              # MCP tool tests
     └── Tools/
 
 deploy/
-├── Dockerfile                     # Multi-stage build for API + WASM + MCP + Litestream
-├── docker-compose.yml             # Local development (API + KeyCloak, SQLite local)
-├── litestream.yml                 # Litestream configuration (replica path)
-└── openshift/                     # OpenShift deployment manifests
-    ├── deployment-api.yaml        # API Deployment (replicas: 2+, emptyDir + RWX mounts)
-    ├── pdb-api.yaml               # PodDisruptionBudget (minAvailable: 1)
-    ├── pvc-replicas.yaml          # RWX PersistentVolumeClaim for Litestream replicas
-    ├── service.yaml               # API Service (ClusterIP)
-    ├── route.yaml                 # OpenShift Route (HTTPS)
-    ├── configmap.yaml             # Non-secret configuration
-    └── secret.yaml                # Template for secrets (not committed)
+├── docker-compose.yml             # Local KeyCloak only (optional)
+└── install.ps1                    # Production deployment script (IIS site setup, service install)
 
-.github/
-└── workflows/
-    ├── ci.yml                     # Build + test on push/PR
-    └── deploy.yml                 # Build image + deploy to OpenShift
+azure-pipelines.yml                    # Azure DevOps build + test + publish pipeline
 ```
 
-**Structure Decision**: Blazor WASM as a separate project served as static files by the API host. MCP tools hosted as Streamable HTTP middleware within the API (no separate container). This gives clean code separation while deploying a single container. SQLite is embedded in each pod (emptyDir) with Litestream replicating to a shared RWX PVC — zero database Deployments. A Shared project holds DTOs and models. GitHub Actions handles CI/CD.
+**Structure Decision**: Blazor WASM as a separate project served as static files by the API host. MCP tools hosted as Streamable HTTP middleware within the API. Single-process deployment to Windows Server 2025 (IIS or Windows Service). SQL Server 2019 on the same VM. LocalDB for local development with zero external dependencies. A Shared project holds DTOs and models. Azure DevOps on-prem handles CI/CD.
 
 ## Complexity Tracking
 
 No constitution violations requiring justification. The 3-project solution structure (Api+MCP, Web, Shared) is the minimum needed to cleanly separate:
-- API + MCP + leadership concerns (authentication, persistence, business logic, MCP tool protocol, leader election)
+- API + MCP concerns (authentication, persistence, business logic, MCP tool protocol)
 - Frontend concerns (UI rendering, client-side state)
 - Shared concerns (models, DTOs reused across projects)

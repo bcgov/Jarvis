@@ -78,7 +78,7 @@ The central entity. Uniquely identified by acronym. Supports soft-delete only (r
 | CollectedAt | DateTimeOffset | Required | When data was last collected |
 | CreatedAt | DateTimeOffset | Required, Auto | Record creation timestamp |
 | UpdatedAt | DateTimeOffset | Required, Auto | Last modification timestamp |
-| RowVersion | byte[] | Concurrency token | Optimistic concurrency control (SQLite trigger-updated BLOB) |
+| RowVersion | byte[] | Concurrency token | SQL Server native `rowversion` — auto-incremented on every update, mapped by EF Core as concurrency token |
 
 **Validation Rules**:
 - Acronym: alphanumeric + hyphens, 1-50 chars, case-insensitive unique

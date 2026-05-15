@@ -6,7 +6,7 @@
 
 The MCP (Model Context Protocol) server exposes application inventory tools to AI assistants and automation tools. It uses **Streamable HTTP transport** hosted as middleware within the ASP.NET Core API, and communicates via JSON-RPC 2.0 as defined by the MCP specification (2025-03-26).
 
-All MCP traffic flows through the same OpenShift Route as the REST API, making it accessible through the HTTP proxy boundary.
+All MCP traffic is served by the same ASP.NET Core process as the REST API.
 
 ## Server Info
 
@@ -49,7 +49,7 @@ Authorization: Bearer <token>
   "servers": {
     "jarvis-inventory": {
       "type": "http",
-      "url": "https://jarvis.apps.gold.devops.gov.bc.ca/mcp",
+      "url": "https://jarvis.example.gov.bc.ca/mcp",
       "headers": {
         "Authorization": "Bearer ${JARVIS_TOKEN}"
       }

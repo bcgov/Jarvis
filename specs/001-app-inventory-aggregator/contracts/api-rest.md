@@ -624,7 +624,7 @@ The `source` field (top-level in the patch) is used to record provenance for all
 
 ### GET /health/ready
 
-**Description**: Readiness check. Returns 200 if the local SQLite database is accessible and Litestream replication is current (on leader) or last sync is within acceptable staleness (on followers).
+**Description**: Readiness check. Returns 200 if SQL Server is reachable and the database schema is current.
 
 **Authorization**: None (public)
 
@@ -634,9 +634,7 @@ The `source` field (top-level in the patch) is used to record provenance for all
 {
   "status": "ready",
   "checks": {
-    "database": "healthy",
-    "role": "leader",
-    "replicationLag": "0s"
+    "database": "healthy"
   }
 }
 ```

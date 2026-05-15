@@ -7,78 +7,51 @@
 **Decision**: Blazor WebAssembly (WASM) hosted by the ASP.NET Core API
 
 **Rationale**:
-- Multi-pod deployment is straightforward because WASM runs entirely in the browser; no SignalR connections to manage across pods.
-- OpenShift round-robin load balancing works without sticky sessions.
-- The API is stateless, so horizontal scaling is trivial.
-- The frontend is served as static files; CDN/caching friendly.
-- For a read-heavy inventory browser, client-side rendering reduces server load.
+- The UI is read-only (spec assumption). WASM offloads rendering to the browser, keeping server load minimal.
+- The frontend is served as static files from the API; no separate hosting needed.
+- Clean separation: the WASM client communicates with the backend exclusively via the REST API, making the API the single source of truth for both UI and programmatic consumers.
 - ~5000 records with search/filter is well within WASM capability.
+- For a single-server deployment, WASM reduces server resource consumption since rendering happens client-side.
 
 **Alternatives considered**:
-- **Blazor Server**: Simpler initial development (no API layer needed for UI), but requires SignalR sticky sessions or a Redis backplane for multi-pod. Adds infrastructure complexity that violates Simplicity First (Principle II).
-- **Blazor Server with Redis backplane**: Works multi-pod but introduces a Redis dependency for what is fundamentally a read-only UI. Overkill for this use case.
-- **Blazor WASM (standalone, separate host)**: Adds another deployment unit. Hosting WASM from the API project is simpler and reduces container count.
+- **Blazor Server**: Simpler initial development (no separate WASM project), but maintains persistent SignalR connections per user. On a single VM this is fine, but WASM is lighter on server resources and keeps the architecture consistent if scaling is ever needed.
+- **Blazor WASM (standalone, separate host)**: Adds a second site/binding to manage. Hosting WASM from the API project is simpler.
 
 ## Decision 2: Data Storage
 
-**Decision**: SQLite embedded in each API pod, with Litestream replication to a shared RWX PVC, and Kubernetes Lease-based leader election for single-writer coordination
+**Decision**: SQL Server 2019, with LocalDB for local development
 
 **Rationale**:
-- ~5000 records is a tiny dataset (~10-20MB SQLite file). Embedding the database in each API pod eliminates any database Deployment entirely — zero extra pods.
-- Every Deployment in this namespace must have PDB minAvailable: 1 (requiring ≥2 replicas). Running a database as a Deployment would force either HA PostgreSQL (too complex) or a single-instance PostgreSQL with no PDB (violates the constraint). Embedded SQLite sidesteps this.
-- **Leader election via Kubernetes Lease**: one API pod acquires a Lease and becomes the write leader. Only the leader accepts writes and runs Litestream in continuous replication mode, shipping WAL segments to a shared RWX (ReadWriteMany) PVC.
-- **Follower pods** serve reads from a local SQLite copy. A BackgroundService periodically restores from the RWX PVC (every ~5s), keeping read staleness within the spec's 5-second SLA (SC-003).
-- **No S3 required**: Litestream's `file` replica type writes to a filesystem path. The RWX PVC (NFS-backed via NetApp, standard in OpenShift Gold) provides the shared filesystem. No MinIO, no external S3.
-- SQLite WAL mode on the leader pod provides concurrent reads during writes (local to that pod).
-- EF Core SQLite provider is mature and well-supported.
-- Litestream binary is included in the Docker image (~8MB, single static binary).
-
-**Write forwarding**:
-- OpenShift Route distributes requests via round-robin. A write request may hit any pod.
-- If a follower pod receives a write request, it proxies it to the leader pod's IP (discovered from the Lease object, which stores the holder's identity). This is a simple HTTP reverse-proxy middleware — ~20 lines of code.
-- The leader processes the write against its local SQLite, Litestream replicates the WAL to the RWX PVC, and the follower returns the response to the client.
-
-**Volume layout per pod**:
-- `emptyDir` at `/data/` — local SQLite database (ephemeral, rebuilt from RWX on startup)
-- RWX PVC at `/replicas/` — shared Litestream WAL segments and snapshots
-
-**Failure modes**:
-- Leader pod evicted: another pod acquires the Lease (~5-10s), restores latest state from RWX PVC, becomes the new leader. Writes return 503 during the failover window. Reads continue from all follower pods.
-- Follower pod evicted: new pod starts, restores from RWX PVC in init container, begins serving reads. No impact to writes.
-- Both scenarios: WASM frontend is already loaded in the browser and continues to function; only API calls are briefly affected.
+- The production server runs Windows Server 2025 with SQL Server 2019 already available. No additional infrastructure to provision.
+- SQL Server handles concurrent reads and writes natively — connection pooling, MVCC, row-level locking. No leader election, write forwarding, or replication needed.
+- ~5000 records is a trivial dataset for SQL Server.
+- EF Core's SQL Server provider (`Microsoft.EntityFrameworkCore.SqlServer`) is the most mature and feature-complete EF Core provider. Native `rowversion` support for optimistic concurrency.
+- **LocalDB for development**: Ships with Visual Studio and the .NET SDK. Zero external dependencies — no Docker, no database server to install. Connection string: `Server=(localdb)\\MSSQLLocalDB;Database=Jarvis;Trusted_Connection=true`. Developers can `dotnet ef database update` and be running immediately.
+- SQL Server Management Studio (SSMS) available for database inspection on both dev and production.
 
 **Alternatives considered**:
-- **Simple single-instance PostgreSQL (no PDB)**: Violates the requirement that all pods must have PDB minAvailable: 1. Accepting no PDB on the database means OpenShift can kill the sole database pod with no replacement ready, causing full write+read outage.
-- **HA PostgreSQL (Patroni/CrunchyData)**: Explicitly ruled out as overkill. Adds operator dependency, 3+ pods, complex failover.
-- **MinIO for S3-compatible storage**: No external S3 available. MinIO in distributed mode requires 4+ pods. MinIO in standalone mode has the same PDB problem as PostgreSQL. RWX PVC eliminates the need for any S3.
-- **SQLite directly on RWX PVC (no Litestream)**: SQLite's documentation warns against running on NFS due to unreliable locking semantics. Litestream avoids this by keeping SQLite on local emptyDir and only storing WAL replicas on NFS.
-- **In-memory with S3 persistence**: No S3 available. In-memory with RWX file persistence would lose relational query power and EF Core integration.
+- **SQLite + Litestream**: Was the previous choice for OpenShift multi-pod. Unnecessary complexity for a single-server deployment. SQL Server is already available on the target VM.
+- **PostgreSQL**: Would require installing and maintaining a separate database server on Windows. SQL Server is native to the Windows ecosystem and already present.
+- **SQLite (simple, no replication)**: Viable for the dataset size, but loses native concurrency handling, `rowversion`, and full-text search capabilities that SQL Server provides. LocalDB gives the same zero-dependency dev experience.
 
-## Decision 3: OpenShift Deployment Architecture
+## Decision 3: Deployment Architecture
 
-**Decision**: Single Deployment (API + WASM + MCP) with multiple replicas, PDB, and embedded SQLite. No database pods.
+**Decision**: Single Windows Server 2025 VM running the application as a Windows Service (Kestrel) or behind IIS as a reverse proxy
 
 **Rationale**:
-- One Deployment: `jarvis-api`, replicas ≥ 2, PDB minAvailable: 1.
-- Each pod carries its own SQLite database (emptyDir) and syncs via Litestream to a shared RWX PVC.
-- API container serves Blazor WASM static files, handles REST API requests, and hosts MCP Streamable HTTP endpoints.
-- Zero additional Deployments — no database pod, no MinIO, no separate MCP server.
-- Health checks via `/health` (liveness) and `/health/ready` (readiness, verifies local SQLite is accessible and Litestream replication is current) on the API pods.
-- Standard Kubernetes Deployment (not legacy DeploymentConfig) as OpenShift 4.x supports it natively.
-- All ingress/egress goes through OpenShift router (HAProxy) which acts as the HTTP proxy boundary.
-
-**OpenShift resources**:
-- `Deployment` (jarvis-api): replicas: 2, Litestream sidecar or entrypoint wrapper
-- `PodDisruptionBudget`: minAvailable: 1
-- `PersistentVolumeClaim` (RWX): shared Litestream replica store (~50MB, NFS-backed)
-- `Service` + `Route`: HTTPS ingress
-- `ConfigMap`: non-secret configuration
-- `Secret`: KeyCloak client secret, Litestream config (if any)
+- The target is a single Windows Server 2025 VM with SQL Server 2019. No container orchestration, no clustering.
+- ASP.NET Core runs natively on Windows as a self-contained deployment. Two hosting options:
+  - **IIS reverse proxy** (recommended): IIS handles TLS termination, static file caching, and process management. The app runs behind IIS via the ASP.NET Core Module (ANCM). Automatic process restart on crash.
+  - **Windows Service (Kestrel direct)**: The app runs as a Windows Service via `Microsoft.Extensions.Hosting.WindowsServices`. Simpler setup but no built-in TLS termination or process management features of IIS.
+- `dotnet publish` produces a self-contained deployment folder. Deployment is a file copy + service restart.
+- Health checks via `/health` (liveness) and `/health/ready` (readiness, verifies SQL Server connectivity).
+- Blazor WASM is published as static files in the API's `wwwroot/` — served by the same process.
+- MCP Streamable HTTP endpoint hosted at `/mcp` in the same process.
 
 **Alternatives considered**:
-- **API + separate PostgreSQL Deployment**: PostgreSQL also needs PDB minAvailable: 1, which forces HA PostgreSQL (too complex). Embedded SQLite eliminates the problem.
-- **Separate MCP container (stdio)**: stdio transport cannot traverse the HTTP proxy. MCP as Streamable HTTP middleware in the API eliminates a second Deployment.
-- **Single replica**: Violates the requirement for PodDisruptionBudget of 1. A single pod would cause downtime during eviction.
+- **OpenShift / Kubernetes**: Was the previous deployment target. Removed in favor of a simpler single-VM deployment. No container orchestration needed for a single-server app.
+- **Docker on Windows**: Adds a container runtime dependency for no benefit on a single server. Native deployment is simpler.
+- **Azure App Service**: Not available — the target is an on-premises VM.
 
 ## Decision 4: Authentication Architecture
 
@@ -116,79 +89,77 @@
 **Decision**: Streamable HTTP transport hosted as middleware within the ASP.NET Core API, using the official ModelContextProtocol NuGet package
 
 **Rationale**:
-- All traffic into and out of OpenShift traverses an HTTP proxy (OpenShift router). stdio transport cannot pass through this boundary — external AI clients have no way to exec into pods or attach to stdin.
-- Streamable HTTP is the current MCP transport standard (spec 2025-03-26). It uses HTTP POST for client→server requests and Server-Sent Events (SSE) for server→client streaming. Both work through HTTP proxies.
-- Hosting MCP as middleware in the API eliminates a separate container, Deployment, and Route. The MCP endpoint is just another path on the same pods (`/mcp`).
-- Shares the same authentication (KeyCloak JWT), authorization (role resolution), and database services. No duplication.
-- The `ModelContextProtocol` .NET SDK supports both stdio and HTTP transports. Switching from stdio to HTTP is a configuration change in `Program.cs`.
-- AI clients (Claude, Copilot, etc.) connect via the public route URL (e.g., `https://jarvis.apps.gold.devops.gov.bc.ca/mcp`).
+- Streamable HTTP is the current MCP transport standard (spec 2025-03-26). It uses HTTP POST for client→server requests and Server-Sent Events (SSE) for server→client streaming.
+- Hosting MCP as middleware in the API means no separate process or deployment. The MCP endpoint is just another path on the same server (`/mcp`).
+- Shares the same authentication (KeyCloak JWT + PATs), authorization (role resolution), and database services. No duplication.
+- The `ModelContextProtocol` .NET SDK supports both stdio and HTTP transports. Switching transports is a configuration change in `Program.cs`.
+- AI clients (Claude, Copilot, etc.) connect via the server URL (e.g., `https://jarvis.example.gov.bc.ca/mcp`).
 
 **Alternatives considered**:
-- **stdio transport in a sidecar container**: AI clients would need `oc exec` access to the pod. Requires OpenShift RBAC for pod exec, which is a security concern and operational complexity. Not viable through HTTP proxy.
-- **stdio transport as a separate Deployment**: Same proxy problem. Also adds a container, Deployment, and Service that serve no purpose since stdio doesn't listen on a port.
-- **Legacy SSE transport (pre-2025-03-26)**: Separate SSE endpoint + HTTP POST. Functionally similar to Streamable HTTP but being superseded. Use the current spec.
-- **Separate HTTP MCP container**: Works through proxy but adds a second Deployment for no benefit. The MCP tools call the same services as the REST API — hosting in the same process avoids network hops and auth duplication.
+- **stdio transport**: Would require users to have direct access to the server to run the binary. Streamable HTTP is accessible from any network-connected MCP client.
+- **Separate MCP process on the same VM**: Adds process management complexity for no benefit. Same-process hosting shares auth and DB access.
+- **Legacy SSE transport (pre-2025-03-26)**: Being superseded by Streamable HTTP. Use the current spec.
 
 ## Decision 7: Concurrency and Field-Level Merge
 
-**Decision**: Optimistic concurrency with field-level merge using EF Core's change tracking + a RowVersion column. Single-writer guarantee simplifies conflict handling.
+**Decision**: Optimistic concurrency with field-level merge using EF Core's change tracking + SQL Server's native `rowversion` column
 
 **Rationale**:
-- The leader election pattern (Decision 2) guarantees a single writer process at any time. This eliminates database-level write contention entirely — SQLite's single-writer model is a feature, not a limitation.
-- Concurrency conflicts arise only from *API clients* submitting overlapping updates, not from database-level race conditions between pods.
-- Each application record has a `RowVersion` (concurrency token, stored as a SQLite BLOB updated via trigger).
-- On update, the API loads the current record, applies field-level changes, and saves. EF Core detects concurrency conflicts via the version column.
+- SQL Server's `rowversion` (timestamp) type is automatically updated on every row modification. EF Core maps this natively as a concurrency token — no triggers or manual management needed.
+- Each application record has a `RowVersion` column. EF Core includes it in the `WHERE` clause on updates, detecting conflicts automatically.
 - For field-level merge: the API accepts partial updates (PATCH semantics). Only fields included in the request are updated. Two concurrent updates to different fields both succeed because they modify different columns.
 - Two concurrent updates to the same field: second request gets a 409 Conflict for that specific field.
+- SQL Server handles concurrent reads and writes from multiple API requests natively via MVCC (READ COMMITTED SNAPSHOT isolation).
 
 **Alternatives considered**:
 - **Last-write-wins (no conflict detection)**: Spec explicitly requires field-level merge with conflict rejection for same-field updates. LWW would lose data silently.
 - **Event sourcing**: Massive complexity for a CRUD app with ~50 users. Violates Simplicity First.
-- **Distributed locking**: Unnecessary — there is literally one writer process.
+- **Pessimistic locking**: Unnecessary for this workload. Optimistic concurrency is simpler and performs better for read-heavy scenarios.
 
-## Decision 8: CI/CD and Container Build
+## Decision 8: CI/CD
 
-**Decision**: GitHub Actions for CI/CD. Multi-stage Dockerfile with .NET SDK build + runtime image. Push to OpenShift internal registry or external registry (e.g., GitHub Container Registry).
+**Decision**: Azure DevOps on-prem for CI/CD. Deployment via `dotnet publish` producing a self-contained folder, deployed to the Windows Server VM.
 
 **Rationale**:
-- GitHub Actions is the project's CI platform. Workflows run on push/PR to build, test, and optionally deploy.
-- Multi-stage Dockerfile: Stage 1 restores + builds + publishes all projects. Stage 2 copies published output to a minimal runtime image (`mcr.microsoft.com/dotnet/aspnet:10.0`).
+- Azure DevOps Server (on-prem) is the project's CI/CD platform. Pipelines run on push/PR to build, test, and produce a publish artifact.
+- `dotnet publish --self-contained --runtime win-x64` produces a standalone deployment folder with no .NET runtime dependency on the server.
 - Blazor WASM is published as static files and included in the API's wwwroot.
-- Image size optimization: trim unused assemblies, use alpine-based runtime where possible.
-- Health check endpoints enable OpenShift readiness/liveness probes.
-- ConfigMaps for non-secret configuration, Secrets for KeyCloak client credentials and database connection string.
-- GitHub Actions workflow stages: restore → build → test → publish → docker build → push → (optional) deploy to OpenShift via `oc` CLI or Helm.
+- Deployment to the VM via a self-hosted agent on the target server, or via artifact download + PowerShell deployment script (`deploy/install.ps1`).
+- No container images, no registry, no Dockerfile.
+- YAML pipelines (`azure-pipelines.yml`) checked into the repo for pipeline-as-code.
 
 **Alternatives considered**:
-- **OpenShift BuildConfig / S2I**: OpenShift-specific, less portable. Standard Dockerfile + GitHub Actions is more universal and keeps CI close to the code.
-- **Buildpacks**: Less control over build process. .NET Dockerfiles are well-understood.
-- **Jenkins**: No indication of Jenkins infrastructure. GitHub Actions is already available.
+- **Docker on Windows Server**: Adds container runtime complexity for a single-server deployment. Native `dotnet publish` is simpler.
+- **GitHub Actions**: Requires internet-accessible runners or self-hosted runner infrastructure. Azure DevOps on-prem is already available and keeps CI/CD within the on-prem network.
+- **Manual build on the server**: Not repeatable. CI ensures every build is tested and consistent.
 
 ## Decision 9: Logging and Observability
 
-**Decision**: Structured logging with Serilog, writing to stdout (OpenShift collects via Fluentd/EFK)
+**Decision**: Structured logging with Serilog, writing to file (rolling) and Windows Event Log
 
 **Rationale**:
-- OpenShift Gold clusters typically have EFK (Elasticsearch, Fluentd, Kibana) or Loki for log aggregation.
-- Writing structured JSON logs to stdout is the twelve-factor app pattern and works with any log collector.
-- Serilog with destructuring policies to mask PII fields (email addresses in non-debug contexts).
-- Health check endpoints (/health, /health/ready) for Kubernetes probes.
+- On a Windows Server VM, the natural log destinations are the filesystem and Windows Event Log.
+- Serilog with `Serilog.Sinks.File` (rolling daily, size-capped) for detailed structured JSON logs.
+- Serilog with `Serilog.Sinks.EventLog` for critical errors and application lifecycle events, making them visible in Windows Event Viewer.
+- Serilog destructuring policies mask PII fields (email addresses in non-debug contexts).
+- Health check endpoints (`/health`, `/health/ready`) for monitoring tools or load balancer probes.
 - No APM agent needed initially; can add OpenTelemetry later if performance investigation is needed.
 
 **Alternatives considered**:
-- **Application Insights**: Azure-specific, not appropriate for OpenShift.
-- **Direct EFK integration**: Coupling to infrastructure. stdout is simpler and portable.
+- **stdout only**: The twelve-factor app pattern, but less useful on a Windows VM where there's no centralized log collector by default. File + Event Log is more practical.
+- **Application Insights**: Azure-specific, adds a cloud dependency for an on-premises deployment.
+- **ELK/EFK stack**: Overkill for a single-server deployment.
 
 ## Decision 10: Data Migration and Seeding
 
-**Decision**: EF Core Migrations for schema management. Initial data load via API bulk import endpoint. Litestream replication to RWX PVC serves as continuous backup.
+**Decision**: EF Core Migrations for schema management. Initial data load via API bulk import endpoint. SQL Server native backup for disaster recovery.
 
 **Rationale**:
 - EF Core Migrations provide versioned, repeatable schema changes.
-- Migrations run on application startup (in Development) or as part of the leader pod's init sequence (in Production).
+- Migrations run on application startup (in Development) or via `dotnet ef database update` as a deployment step (in Production).
 - Initial inventory data (from the existing JSON structure) is loaded via a bulk import API endpoint that maintainers can call.
 - No seed data in migrations — keeps schema changes separate from data changes.
-- Backup is inherent in the architecture: Litestream continuously replicates WAL segments to the RWX PVC. To restore, a new pod simply runs Litestream restore. No separate backup CronJob needed.
+- Backup via SQL Server native backup (full + differential), scheduled via SQL Server Agent or Windows Task Scheduler. Standard, well-understood, no additional tooling.
 
 **Alternatives considered**:
 - **Manual SQL scripts**: Less integrated with the ORM, harder to track in source control alongside model changes.

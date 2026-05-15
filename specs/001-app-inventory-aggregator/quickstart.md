@@ -5,8 +5,10 @@
 ## Prerequisites
 
 - .NET 10 SDK (https://dotnet.microsoft.com/download/dotnet/10.0)
-- Docker Desktop (for local KeyCloak and optional container builds)
 - Git
+- Docker Desktop (optional — only needed for local KeyCloak)
+
+LocalDB ships with the .NET SDK and Visual Studio. No database server to install.
 
 ## 1. Clone and Restore
 
@@ -16,16 +18,15 @@ cd jarvis
 dotnet restore src/Jarvis.sln
 ```
 
-## 2. Start Local Infrastructure
+## 2. Start Local KeyCloak (optional)
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d keycloak
 ```
 
-This starts:
-- **KeyCloak** on http://localhost:8080 (admin/admin) with a pre-configured `jarvis` realm, client, and test users
+This starts **KeyCloak** on http://localhost:8080 (admin/admin) with a pre-configured `jarvis` realm, client, and test users.
 
-Note: In local development, the app runs as a single process with SQLite — no leader election, no Litestream, no shared PVC. The multi-pod replication architecture only applies in OpenShift.
+If you skip KeyCloak, you can still use the API with a Personal Access Token after bootstrapping the first user via another method.
 
 ## 3. Configure the Application
 
@@ -40,15 +41,12 @@ The template contains working defaults for local development:
 ```json
 {
   "ConnectionStrings": {
-    "DefaultConnection": "Data Source=jarvis.db"
+    "DefaultConnection": "Server=(localdb)\\MSSQLLocalDB;Database=Jarvis;Trusted_Connection=true"
   },
   "Authentication": {
     "Authority": "http://localhost:8080/realms/jarvis",
     "ClientId": "jarvis-api",
     "RequireHttpsMetadata": false
-  },
-  "Leadership": {
-    "Enabled": false
   },
   "Logging": {
     "LogLevel": {
@@ -58,8 +56,6 @@ The template contains working defaults for local development:
 }
 ```
 
-Note: `Leadership.Enabled = false` disables Kubernetes Lease leader election and Litestream replication for local development. The app runs as a direct single-writer SQLite process.
-
 ## 4. Run Database Migrations
 
 ```bash
@@ -67,7 +63,7 @@ cd src/Jarvis.Api
 dotnet ef database update
 ```
 
-This creates the SQLite database file (`jarvis.db`) with all tables.
+This creates the `Jarvis` database in LocalDB with all tables and indexes.
 
 ## 5. Run the API (serves both API and Blazor WASM)
 
@@ -110,7 +106,7 @@ Response includes the token (shown once — save it):
 {
   "id": 1,
   "name": "VS Code MCP",
-  "token": "jrv_a3Bx9kLm2nPqRs4tUv6wXy8zA1cD3eF5gH7iJ",
+  "token": "jrv_*****",
   "expiresAt": "2026-08-11T10:00:00Z"
 }
 ```
@@ -167,19 +163,7 @@ dotnet test tests/Jarvis.Web.Tests
 dotnet test tests/Jarvis.Mcp.Tests
 ```
 
-Note: Integration tests use SQLite in-memory databases and do not require Docker.
-
-## 10. Full Docker Build (optional)
-
-Build and run the complete stack in containers:
-
-```bash
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-This starts:
-- KeyCloak (http://localhost:8080)
-- Jarvis API + Web + MCP (http://localhost:5000, SQLite local, no leader election)
+Integration tests use LocalDB and do not require Docker or external services.
 
 ## Common Tasks
 
@@ -223,13 +207,10 @@ curl -X DELETE https://localhost:5001/api/v1/users/me/tokens/1 \
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ConnectionStrings__DefaultConnection` | No | `Data Source=jarvis.db` | SQLite connection string |
+| `ConnectionStrings__DefaultConnection` | No | LocalDB | SQL Server connection string |
 | `Authentication__Authority` | Yes | - | KeyCloak realm URL |
 | `Authentication__ClientId` | Yes | - | OIDC client ID |
 | `Authentication__ClientSecret` | In Prod | - | OIDC client secret (confidential client) |
-| `Leadership__Enabled` | No | `true` | Enable Kubernetes Lease leader election (disable for local dev) |
-| `Leadership__LeaseName` | No | `jarvis-leader` | Kubernetes Lease resource name |
-| `Litestream__ReplicaPath` | In Prod | - | Path to shared RWX PVC for Litestream replicas |
 | `ASPNETCORE_ENVIRONMENT` | No | `Production` | Runtime environment |
 
 ## Project Structure Quick Reference
@@ -239,8 +220,8 @@ src/Jarvis.Api/          -> ASP.NET Core API + Blazor WASM host + MCP (Streamabl
 src/Jarvis.Web/          -> Blazor WebAssembly frontend
 src/Jarvis.Shared/       -> Shared models and DTOs
 tests/                   -> xUnit + bUnit tests
-deploy/                  -> Dockerfile + OpenShift manifests
-.github/workflows/       -> GitHub Actions CI/CD
+deploy/                  -> docker-compose.yml (KeyCloak) + install.ps1 (production)
+azure-pipelines.yml      -> Azure DevOps CI/CD pipeline
 ```
 
 ## Troubleshooting
@@ -249,8 +230,8 @@ deploy/                  -> Dockerfile + OpenShift manifests
 
 **"Connection refused" to KeyCloak**: Ensure the KeyCloak container is running: `docker compose -f deploy/docker-compose.yml ps`
 
-**Database locked errors**: Should not occur in local dev (single writer, Leadership disabled). If running multiple instances locally, ensure only one has write access.
+**Cannot connect to LocalDB**: Verify LocalDB is installed: `sqllocaldb info MSSQLLocalDB`. If the instance doesn't exist, create it: `sqllocaldb create MSSQLLocalDB`. Start it: `sqllocaldb start MSSQLLocalDB`.
+
+**Migration fails**: Ensure the .NET EF Core tools are installed: `dotnet tool install --global dotnet-ef`. Verify the connection string in `appsettings.Development.json` points to your LocalDB instance.
 
 **WASM not loading**: Clear browser cache. Blazor WASM downloads .NET assemblies which can be aggressively cached.
-
-**Write requests returning 503 in OpenShift**: The leader pod may be restarting or transitioning. Wait ~10 seconds for a new leader to be elected. If persistent, check that the Lease exists: `oc get lease jarvis-leader`.
