@@ -102,17 +102,26 @@
 
 ## Decision 7: Concurrency and Field-Level Merge
 
-**Decision**: Optimistic concurrency with field-level merge using EF Core's change tracking + SQL Server's native `rowversion` column
+**Decision**: Optimistic concurrency with field-level merge using SQL Server's native `rowversion` column + a retry-with-field-comparison loop in the application layer
 
 **Rationale**:
 - SQL Server's `rowversion` (timestamp) type is automatically updated on every row modification. EF Core maps this natively as a concurrency token — no triggers or manual management needed.
-- Each application record has a `RowVersion` column. EF Core includes it in the `WHERE` clause on updates, detecting conflicts automatically.
-- For field-level merge: the API accepts partial updates (PATCH semantics). Only fields included in the request are updated. Two concurrent updates to different fields both succeed because they modify different columns.
-- Two concurrent updates to the same field: second request gets a 409 Conflict for that specific field.
+- Each application record has a `RowVersion` column. EF Core includes it in the `WHERE` clause on updates, detecting conflicts automatically via `DbUpdateConcurrencyException`.
+- **Row-level vs field-level**: `rowversion` is a row-level mechanism — it changes on any column update. To achieve field-level merge (FR-015), the application layer implements a retry loop:
+  1. Read the current entity (including RowVersion).
+  2. Apply only the fields from the incoming PATCH request.
+  3. Attempt `SaveChanges()`.
+  4. On `DbUpdateConcurrencyException`: re-read the current database values.
+  5. Compare only the fields this request wants to change against what actually changed in the database since the original read.
+  6. If no overlap (different fields changed) → merge by re-applying this request's fields to the fresh entity and retry.
+  7. If overlap (same field changed by both) → return 409 Conflict listing the conflicting fields.
+- This gives true field-level merge semantics while still using SQL Server's efficient row-level concurrency detection as the trigger.
 - SQL Server handles concurrent reads and writes from multiple API requests natively via MVCC (READ COMMITTED SNAPSHOT isolation).
 
 **Alternatives considered**:
+- **RowVersion alone (no retry loop)**: Would reject all concurrent updates to the same row, even when different fields are modified. Does not satisfy FR-015's field-level merge requirement.
 - **Last-write-wins (no conflict detection)**: Spec explicitly requires field-level merge with conflict rejection for same-field updates. LWW would lose data silently.
+- **Per-field version tracking**: Each field gets its own version counter. Precise but adds significant schema complexity and storage overhead for ~80+ fields across the entity graph. Overkill for ~50 concurrent users.
 - **Event sourcing**: Massive complexity for a CRUD app with ~50 users. Violates Simplicity First.
 - **Pessimistic locking**: Unnecessary for this workload. Optimistic concurrency is simpler and performs better for read-heavy scenarios.
 

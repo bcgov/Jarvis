@@ -114,7 +114,6 @@ Roles are resolved from the application's user table (matched by email claim fro
   "statusSource": "jira_activity",
   "statusConfidence": "high",
   "isCritical": true,
-  "isRetired": false,
   "primaryUrl": "https://app1.gov.bc.ca",
   "urlSource": "cmdb",
   "dataQuality": "green",
@@ -123,6 +122,7 @@ Roles are resolved from the application's user table (matched by email claim fro
   "recentJiraActivity90d": 23,
   "recentJiraActivity365d": 87,
   "collectedAt": "2026-05-13T08:00:00Z",
+  "lastActivity": "2026-05-13T08:00:00Z",
   "contacts": [
     {
       "role": "business_owner",
@@ -190,7 +190,17 @@ Roles are resolved from the application's user table (matched by email claim fro
     "confidenceTier": "green"
   },
   "notes": ["Migration to OpenShift planned for Q3 2026"],
-  "risks": [],
+  "risks": [
+    {
+      "id": 1,
+      "title": "End-of-life framework",
+      "description": "Spring Boot 2.x reaches EOL in Nov 2026. Upgrade to 3.x required.",
+      "severity": "medium",
+      "status": "open",
+      "source": "security_scan",
+      "createdAt": "2026-04-15T10:00:00Z"
+    }
+  ],
   "fieldProvenance": [
     {
       "fieldName": "status",
@@ -242,7 +252,7 @@ Roles are resolved from the application's user table (matched by email claim fro
 If-Match: "{rowVersion}"  (optional, enables conflict detection)
 ```
 
-**Request Body**: JSON Merge Patch (RFC 7396) - only include fields to update.
+**Request Body**: Partial update object — only include fields to change. Scalar fields are replaced; collection fields (`notes`, `risks`) are **appended** to existing values (not replaced).
 
 ```json
 {
@@ -253,6 +263,8 @@ If-Match: "{rowVersion}"  (optional, enables conflict detection)
 ```
 
 The `source` field (top-level in the patch) is used to record provenance for all fields in this update.
+
+**Note on collections**: `notes` and `risks` arrays in a PATCH are appended to the existing collection. To remove a note or risk, use the dedicated DELETE sub-resource endpoints (future). This matches the MCP `update_application` tool's append semantics.
 
 **Response**: 200 OK
 

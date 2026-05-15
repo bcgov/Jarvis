@@ -8,13 +8,13 @@
 ┌──────────────────┐       ┌───────────────────┐
 │       User       │       │    Application    │
 │                  │       │                   │
-│  Email (PK)     │       │  Acronym (PK)     │
+│  Id (PK)        │       │  Id (PK)          │
+│  Email (UK)     │       │  Acronym (UK)     │
 │  Role            │       │  FullName         │
 │  CreatedAt       │       │  Ministry         │
 │  IsActive        │       │  Branch           │
 └──────────────────┘       │  Status           │
                            │  IsCritical       │
-                           │  IsRetired (soft) │
                            │  RowVersion       │
                            └────────┬──────────┘
                                     │
@@ -34,12 +34,13 @@
     │   TechStack    │   │     Link        │   │   FieldProvenance  │
     │                │   │                 │   │                    │
     │  Language      │   │  Type (cmdb..)  │   │  FieldName         │
-    │  Runtime       │   │  Url            │   │  Source            │
+    │  Runtime       │   │  Url            │   │  Source -> DataSrc │
     │  Frameworks[]  │   └─────────────────┘   │  UpdatedAt         │
     │  Confidence    │                         │  PreviousValue     │
     └────────────────┘            │            └────────────────────┘
                        ┌──────────▼──────────┐
-                       │    Note / Risk      │
+                       │    Note             │
+                       │    Risk             │
                        │                     │
                        │  Content            │
                        │  CreatedAt          │
@@ -51,7 +52,7 @@
 
 ### Application (Primary Entity)
 
-The central entity. Uniquely identified by acronym. Supports soft-delete only (retired status).
+The central entity. Uniquely identified by acronym. Supports soft-delete only (Status = retired).
 
 | Field | Type | Constraints | Notes |
 |-------|------|-------------|-------|
@@ -66,7 +67,6 @@ The central entity. Uniquely identified by acronym. Supports soft-delete only (r
 | StatusSource | string(100) | Nullable | What determined the status |
 | StatusConfidence | enum | Nullable | low, medium, high |
 | IsCritical | bool | Default: false | Critical system flag |
-| IsRetired | bool | Default: false | Soft-delete flag |
 | PrimaryUrl | string(500) | Nullable | Main application URL |
 | UrlSource | string(100) | Nullable | Source of URL data |
 | DataQuality | string(50) | Nullable | e.g., "ghost" or quality descriptor |
@@ -76,6 +76,7 @@ The central entity. Uniquely identified by acronym. Supports soft-delete only (r
 | RecentJiraActivity90d | int | Nullable | Jira tickets in last 90 days |
 | RecentJiraActivity365d | int | Nullable | Jira tickets in last 365 days |
 | CollectedAt | DateTimeOffset | Required | When data was last collected |
+| LastActivity | DateTimeOffset | Required, Auto | Updated whenever the application record is modified (FR-010). Reflects the last time any change was made to this application's data. |
 | CreatedAt | DateTimeOffset | Required, Auto | Record creation timestamp |
 | UpdatedAt | DateTimeOffset | Required, Auto | Last modification timestamp |
 | RowVersion | byte[] | Concurrency token | SQL Server native `rowversion` — auto-incremented on every update, mapped by EF Core as concurrency token |
@@ -205,6 +206,33 @@ One-to-one with Application (stored as owned entity or separate table for query 
 | CreatedAt | DateTimeOffset | Required, Auto | When note was added |
 | Source | string(100) | Nullable | Data source that provided note |
 
+### ApplicationRisk
+
+A known risk or vulnerability associated with an application (FR-007, FR-014).
+
+| Field | Type | Constraints | Notes |
+|-------|------|-------------|-------|
+| Id | int | PK, auto-increment | |
+| ApplicationId | int | FK -> Application, Required | |
+| Title | string(200) | Required | Short risk/vulnerability description |
+| Description | string(2000) | Nullable | Detailed description, mitigation, or impact notes |
+| Severity | enum | Nullable | low, medium, high, critical |
+| Status | string(50) | Nullable | open, mitigated, accepted, resolved |
+| CreatedAt | DateTimeOffset | Required, Auto | When risk was recorded |
+| Source | string(100) | Nullable | Data source that provided this risk |
+
+### DataSource
+
+Central registry of data source systems that feed application inventory data (spec Key Entity).
+
+| Field | Type | Constraints | Notes |
+|-------|------|-------------|-------|
+| Id | int | PK, auto-increment | |
+| Name | string(100) | Required, Unique, Indexed | Canonical source name (e.g., "cmdb", "jira", "bitbucket") |
+| Description | string(500) | Nullable | Human-readable description of this data source |
+| LastSyncAt | DateTimeOffset | Nullable | When this source last provided data |
+| IsActive | bool | Default: true | Whether this source is currently feeding data |
+
 ### Provenance
 
 One-to-one with Application. Tracks which data sources contain this application.
@@ -300,6 +328,8 @@ Self-service tokens for API and MCP authentication. Follows the GitHub/Azure Dev
 | FieldProvenance | IX_FieldProvenance_ApplicationId | Non-unique | History lookup |
 | FieldProvenance | IX_FieldProvenance_Source | Non-unique | Source attribution queries |
 | ApplicationAlias | IX_ApplicationAlias_Alias | Non-unique | Alias search |
+| ApplicationRisk | IX_ApplicationRisk_ApplicationId | Non-unique | Join performance |
+| DataSource | IX_DataSource_Name | Unique | Source lookup by name |
 
 ## Enumerations
 
@@ -328,6 +358,11 @@ red | yellow | green
 svn | bitbucket | github
 ```
 
+### RiskSeverity
+```
+low | medium | high | critical
+```
+
 ## JSON-to-Entity Mapping
 
 The following maps the provided JSON structure to the entity model:
@@ -343,7 +378,7 @@ The following maps the provided JSON structure to the entity model:
 | `ownership.section` | Application.Section |
 | `ownership.business_owner` | Contact (Role="business_owner") |
 | `ownership.technical_lead` | Contact (Role="technical_lead") |
-| `ownership.team` | Application.Team (extend if needed) or Contact with role="team" |
+| `ownership.team` | Contact (Role="team") |
 | `ownership.contacts[]` | Contact (various roles) |
 | `tech_stack.*` | TechStack entity |
 | `tech_stack.frameworks[]` | TechStackFramework.Name |
@@ -366,5 +401,6 @@ The following maps the provided JSON structure to the entity model:
 | `provenance.*` | Provenance entity |
 | `links.*` | ApplicationLink per type |
 | `notes[]` | ApplicationNote.Content |
+| `risks[]` | ApplicationRisk entities |
 | `data_quality` | Application.DataQuality |
 | `_collected_at` | Application.CollectedAt |

@@ -131,7 +131,7 @@ The system tracks where each piece of application data originated. When the same
 - **FR-004**: System MUST provide a read-only user interface that displays the consolidated application inventory with search, filter, and sort capabilities.
 - **FR-005**: System MUST provide an API that allows authenticated clients with maintainer or administrator roles to create and update application records.
 - **FR-006**: System MUST provide an MCP server that exposes tools for querying and updating the application inventory.
-- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown), data sources, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
+- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown/maintenance), data sources, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
 - **FR-008**: System MUST validate that required fields are provided when creating or updating application records and return clear error messages for invalid submissions.
 - **FR-009**: System MUST track the data source origin for each application record and field update.
 - **FR-010**: System MUST update the "last activity" timestamp whenever an application record is modified.
@@ -148,13 +148,19 @@ The system tracks where each piece of application data originated. When the same
 - **FR-021**: System MUST enforce soft delete for applications — applications can only be marked as "retired" and cannot be permanently removed through the application, preserving audit history.
 - **FR-022**: System MUST provide auto-suggest functionality for the technologies field, suggesting existing tag values as users or API clients enter new values.
 - **FR-023**: System MUST authenticate MCP server connections using the same token-based authentication mechanism as the REST API (shared identity provider).
+- **FR-024**: System MUST allow any authenticated user to create self-service Personal Access Tokens (PATs) for API and MCP authentication. PATs are stable credentials that do not require browser-based OAuth flows.
+- **FR-025**: System MUST enforce a maximum lifetime of 90 days for Personal Access Tokens. Users set an expiry up to this limit at creation time.
+- **FR-026**: System MUST store only the SHA-256 hash of each PAT. The plaintext token is shown once at creation time and cannot be retrieved again.
+- **FR-027**: System MUST allow users to revoke their own tokens and allow administrators to revoke any user's tokens. Revocation is immediate and irreversible.
+- **FR-028**: System MUST limit each user to a maximum of 10 active (non-expired, non-revoked) Personal Access Tokens.
+- **FR-029**: System MUST resolve the user's current role on each PAT-authenticated request (not a cached role from token creation time). If a user's role changes, existing PATs immediately reflect the new permissions.
 
 ### Key Entities
 
 - **Application**: The central entity representing a tracked software application. Contains all inventory fields (acronym, name, ministry, branch, technologies, hosting, status, URLs, contacts, critical flag, notes, risks). Uniquely identified by acronym. Cannot be permanently deleted; can only be marked "retired" (soft delete).
 - **Data Source**: Represents an origin system or feed that provides application inventory data. Tracks which source provided each piece of information and when.
 - **User**: A person who has authenticated via corporate SSO. Uniquely identified by email address. Has an assigned role (administrator, maintainer, or reader) that determines their permissions within the system. Users must be pre-populated by an administrator before they can access the system (except for the bootstrapping case where the first user becomes admin).
-- **Contact**: A person associated with an application in a specific capacity (business owner or technical lead). Contains name and contact information.
+- **Contact**: A person associated with an application in a specific capacity (business owner, technical lead, or other custom roles). Contains name and contact information.
 - **Risk/Vulnerability**: A known risk or vulnerability associated with an application. Contains description and any relevant notes about mitigation or impact.
 - **Environment URL**: A URL associated with a specific deployment environment (development, staging, production) for an application.
 

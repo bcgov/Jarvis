@@ -152,7 +152,7 @@ Set the environment variable: `export JARVIS_TOKEN="jrv_a3Bx9k..."`
 ## 9. Run Tests
 
 ```bash
-dotnet test src/Jarvis.sln
+dotnet test Jarvis.sln
 ```
 
 Individual test projects:

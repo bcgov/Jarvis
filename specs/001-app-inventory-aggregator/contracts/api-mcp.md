@@ -25,7 +25,7 @@ All MCP traffic is served by the same ASP.NET Core process as the REST API.
 The MCP server uses Streamable HTTP transport:
 - Client sends JSON-RPC requests via HTTP POST to `/mcp`
 - Server responds with JSON-RPC results, or streams via Server-Sent Events (SSE) for long-running operations
-- All requests pass through the OpenShift router (HTTP proxy) like any other API call
+- All requests are served by the same IIS/Kestrel process as the REST API
 
 ## Authentication
 
@@ -189,6 +189,9 @@ Notes:
   - PCI-DSS compliant since 2024
   - Scheduled for framework upgrade Q4 2026
 
+Risks:
+  - [medium] End-of-life framework: Spring Boot 2.x reaches EOL Nov 2026 (status: open)
+
 Data collected: 2026-05-13T08:00:00Z
 ```
 
@@ -224,6 +227,20 @@ Data collected: 2026-05-13T08:00:00Z
         "status": { "type": "string", "enum": ["active", "dormant", "retired", "unknown", "maintenance"] },
         "isCritical": { "type": "boolean" },
         "notes": { "type": "array", "items": { "type": "string" }, "description": "Notes to append (not replace)" },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+              "status": { "type": "string" }
+            },
+            "required": ["title"]
+          },
+          "description": "Risks to append (not replace)"
+        },
         "contacts": {
           "type": "array",
           "items": {
