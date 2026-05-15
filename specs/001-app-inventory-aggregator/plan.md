@@ -6,25 +6,25 @@
 
 ## Summary
 
-Build an application inventory aggregator that consolidates data from multiple sources into a searchable, read-only web UI. Updates flow exclusively through a REST API and an MCP server. The system uses .NET 10, Blazor WebAssembly for the frontend, an ASP.NET Core API backend, SQL Server 2019 for storage, KeyCloak for SSO/OIDC authentication, and deploys to a single Windows Server 2025 VM. Role-based access control (admin/maintainer/reader) governs who can view or modify inventory data. Self-service Personal Access Tokens enable API and MCP access.
+Build an application inventory aggregator that consolidates data from multiple sources into a searchable, read-only web UI. Updates flow exclusively through a REST API and an MCP server. The system uses .NET 10, Blazor WebAssembly for the frontend, an ASP.NET Core API backend, SQL Server 2019 for storage, Keycloak for SSO/OIDC authentication, and deploys to a single Windows Server 2025 VM. Role-based access control (admin/maintainer/reader) governs who can view or modify inventory data. Self-service Personal Access Tokens enable API and MCP access.
 
 ## Technical Context
 
 **Language/Version**: .NET 10 (C# 14)
 
-**Primary Dependencies**: ASP.NET Core 10, Blazor WebAssembly (standalone), Entity Framework Core 10 (SQL Server provider), Microsoft.AspNetCore.Authentication.OpenIdConnect (KeyCloak OIDC), ModelContextProtocol SDK for .NET (Streamable HTTP transport), FluentValidation, Serilog (File + EventLog sinks)
+**Primary Dependencies**: ASP.NET Core 10, Blazor WebAssembly (standalone), Entity Framework Core 10 (SQL Server + Design packages), Microsoft.AspNetCore.Authentication.OpenIdConnect and JwtBearer (Keycloak OIDC), ModelContextProtocol SDK for .NET (Streamable HTTP transport), FluentValidation, Serilog (File + EventLog sinks)
 
 **Storage**: SQL Server 2019 (production), LocalDB (development)
 
-**Testing**: xUnit, bUnit (Blazor component tests), Microsoft.AspNetCore.Mvc.Testing (integration tests with LocalDB), Verify (snapshot testing for contracts)
+**Testing**: xUnit, bUnit (Blazor component tests), Microsoft.AspNetCore.Mvc.Testing (integration tests backed by LocalDB / SQL Server behavior)
 
 **Target Platform**: Windows Server 2025, IIS reverse proxy or Windows Service (Kestrel)
 
 **Project Type**: Web application (Blazor WASM frontend + ASP.NET Core API backend + MCP server)
 
-**Performance Goals**: Search results < 500ms, API response < 200ms p95, UI first contentful paint < 2s
+**Performance Design Targets**: Internal tuning targets only (not acceptance criteria): search results < 500ms, API response < 200ms p95, UI first contentful paint < 2s
 
-**Constraints**: Single-server deployment, SQL Server 2019 (existing on the VM), LocalDB for zero-dependency local dev, no container orchestration
+**Constraints**: Single-server deployment, SQL Server 2019 (existing on the VM), LocalDB for local database development, Dockerized Keycloak or an approved development OIDC provider for local authentication, pinned NuGet package versions with lock files, warnings treated as errors, and CI gates for locked restore, vulnerability scan, static analysis/lint, build, and tests on every push
 
 **Scale/Scope**: ~5000 application records, ~50 concurrent users, 3 user roles, ~10 data source integrations
 
@@ -34,11 +34,11 @@ Build an application inventory aggregator that consolidates data from multiple s
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| I. Data Security | PASS | Secrets via env vars or appsettings (excluded from git). KeyCloak client secret not in source control. No PII in logs (structured logging with masking). .gitignore excludes appsettings.Development.json. |
+| I. Data Security | PASS | Secrets supplied only via environment variables or an approved secret manager. `appsettings` files contain placeholders or other non-secret defaults only. No PII in logs (structured logging with masking). `.gitignore` excludes local settings and environment files. |
 | II. Simplicity First | PASS | Single solution with 3 projects (API+MCP, Blazor WASM, Shared). SQL Server already on the VM — no additional infrastructure. No repository pattern — direct EF Core DbContext. |
 | III. Adaptability | PASS | Loose coupling via clean service interfaces. EF Core allows DB swap later. MCP hosted as HTTP middleware in API. Blazor WASM decoupled from API via HTTP client. |
-| IV. Regression Safety | PASS | xUnit + bUnit + integration tests. CI pipeline gates on test pass. Acceptance scenarios from spec map directly to integration tests. |
-| V. Ease of Use | PASS | LocalDB for zero-dependency local dev. Clear API error messages with ProblemDetails. BC Design System styling for consistent UX. Minimal setup: clone, dotnet ef database update, dotnet run. |
+| IV. Regression Safety | PASS | xUnit + bUnit + LocalDB-backed integration tests. CI gates on locked restore, vulnerability scan, static analysis/lint, build, and test pass. Acceptance scenarios from spec map directly to tests. |
+| V. Ease of Use | PASS | LocalDB removes the need for a separate dev database. Local auth uses Dockerized Keycloak or an approved dev OIDC provider. Clear API error messages with ProblemDetails. Minimal setup: clone, `dotnet tool restore`, start local Keycloak or configure the dev IdP, `dotnet ef database update`, `dotnet run`. |
 
 **Gate Result**: PASS - No violations. Proceed to Phase 0.
 
@@ -46,11 +46,11 @@ Build an application inventory aggregator that consolidates data from multiple s
 
 | Principle | Status | Post-Design Assessment |
 |-----------|--------|------------------------|
-| I. Data Security | PASS | KeyCloak secrets in appsettings.Production.json (excluded from git) or Windows environment variables. SQL Server connection string uses Windows Authentication where possible. Serilog with PII masking. .gitignore blocks appsettings.Development.json. JWT tokens validated server-side; no secrets in WASM client. |
+| I. Data Security | PASS | Keycloak secrets are supplied only via environment variables or an approved secret manager. `appsettings` files carry placeholders or non-secret defaults only. SQL Server connection strings use Windows Authentication where possible. Serilog masks PII. `.gitignore` blocks local settings and environment files. JWT tokens are validated server-side; no secrets live in the WASM client. |
 | II. Simplicity First | PASS | 3 projects is the minimum for clean separation (API+MCP, WASM, Shared). SQL Server already on the VM — zero additional infrastructure. No repository pattern — direct EF Core. No event sourcing. BC Design tokens reused rather than wrapping React. Single process deployment. |
 | III. Adaptability | PASS | EF Core provider swap is a NuGet + connection string change. MCP transport can switch between HTTP and stdio via configuration. WASM frontend decoupled from API. Field-level provenance allows data source changes without model changes. |
-| IV. Regression Safety | PASS | xUnit for API logic, bUnit for Blazor components, integration tests with WebApplicationFactory. Acceptance scenarios from spec map to test cases. CI gates on test pass. |
-| V. Ease of Use | PASS | LocalDB for zero-dependency dev: clone, restore, run. ProblemDetails errors with corrective suggestions. Health endpoints for monitoring. Quickstart documented. Self-contained publish for simple deployment. |
+| IV. Regression Safety | PASS | xUnit for API logic, bUnit for Blazor components, and LocalDB-backed integration tests with WebApplicationFactory. CI gates on locked restore, vulnerability scan, static analysis/lint, build, and tests. Acceptance scenarios from the spec map to test cases. |
+| V. Ease of Use | PASS | LocalDB keeps local storage lightweight, while local auth is provided by Dockerized Keycloak or an approved dev IdP. ProblemDetails errors include corrective suggestions. Health endpoints support monitoring. Quickstart covers `dotnet tool restore`, local auth setup, migrations, and run/publish flows. |
 
 **Post-Design Gate Result**: PASS - No violations introduced during design phase.
 
@@ -78,7 +78,7 @@ src/
 │   ├── Controllers/               # API controllers
 │   ├── Services/                  # Business logic services
 │   ├── Infrastructure/            # EF Core DbContext, migrations, config
-│   ├── Authentication/            # Dual-mode auth (KeyCloak JWT + PAT), role resolution
+│   ├── Authentication/            # Dual-mode auth (Keycloak JWT + PAT), role resolution
 │   ├── Middleware/                # Error handling, logging
 │   ├── Mcp/                      # MCP tool definitions (Streamable HTTP)
 │   ├── Program.cs
@@ -111,13 +111,13 @@ tests/
     └── Tools/
 
 deploy/
-├── docker-compose.yml             # Local KeyCloak only (optional)
+├── docker-compose.yml             # Local Keycloak for development authentication
 └── install.ps1                    # Production deployment script (IIS site setup, service install)
 
 azure-pipelines.yml                    # Azure DevOps build + test + publish pipeline
 ```
 
-**Structure Decision**: Blazor WASM as a separate project served as static files by the API host. MCP tools hosted as Streamable HTTP middleware within the API. Single-process deployment to Windows Server 2025 (IIS or Windows Service). SQL Server 2019 on the same VM. LocalDB for local development with zero external dependencies. A Shared project holds DTOs and models. Azure DevOps on-prem handles CI/CD.
+**Structure Decision**: Blazor WASM runs as a separate project served as static files by the API host. MCP tools are hosted as Streamable HTTP middleware within the API. Deployment remains a single Windows Server 2025 process (IIS or Windows Service) with SQL Server 2019 on the same VM. LocalDB supports local database development, while local authentication uses Dockerized Keycloak or an approved shared dev IdP. A Shared project holds DTOs and models. Azure DevOps on-prem handles CI/CD with locked restore, vulnerability scanning, static analysis/lint, build, and test gates.
 
 ## Complexity Tracking
 

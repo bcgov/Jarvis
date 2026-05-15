@@ -6,27 +6,28 @@
 
 - .NET 10 SDK (https://dotnet.microsoft.com/download/dotnet/10.0)
 - Git
-- Docker Desktop (optional — only needed for local KeyCloak)
+- Docker Desktop (required for local Keycloak-based SSO; optional only if you point the app at an approved existing development OIDC provider)
 
-LocalDB ships with the .NET SDK and Visual Studio. No database server to install.
+LocalDB handles local storage without requiring a separate database server. Authentication still requires either local Keycloak or an approved development identity provider.
 
 ## 1. Clone and Restore
 
 ```bash
 git clone <repo-url> jarvis
 cd jarvis
+dotnet tool restore
 dotnet restore src/Jarvis.sln
 ```
 
-## 2. Start Local KeyCloak (optional)
+## 2. Start Local Keycloak (required unless you are using an approved development OIDC provider)
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d keycloak
 ```
 
-This starts **KeyCloak** on http://localhost:8080 (admin/admin) with a pre-configured `jarvis` realm, client, and test users.
+This starts **Keycloak** on http://localhost:8080 (admin/admin) with a pre-configured `jarvis` realm, client, and test users.
 
-If you skip KeyCloak, you can still use the API with a Personal Access Token after bootstrapping the first user via another method.
+These quickstart steps assume the local Keycloak container. If you skip it, configure `Authentication__Authority` (and any related auth settings) to an approved development OIDC provider before continuing. PAT-only access is not enough for the initial bootstrap login.
 
 ## 3. Configure the Application
 
@@ -56,6 +57,8 @@ The template contains working defaults for local development:
 }
 ```
 
+The template contains non-secret defaults only. If your OIDC client requires a secret, supply `Authentication__ClientSecret` via an environment variable or approved secret manager rather than writing it into any `appsettings` file.
+
 ## 4. Run Database Migrations
 
 ```bash
@@ -64,6 +67,7 @@ dotnet ef database update
 ```
 
 This creates the `Jarvis` database in LocalDB with all tables and indexes.
+The pinned `dotnet-ef` tool comes from the repository tool manifest restored in step 1.
 
 ## 5. Run the API (serves both API and Blazor WASM)
 
@@ -80,7 +84,7 @@ The application starts at:
 ## 6. First Login (Bootstrap)
 
 1. Navigate to https://localhost:5001
-2. You are redirected to KeyCloak login
+2. You are redirected to Keycloak login
 3. Sign in with a test user (e.g., `admin@test.local` / `password`)
 4. Since no users exist in the system, the first authenticated user is automatically assigned the administrator role
 5. You now have full access and can provision other users
@@ -131,7 +135,7 @@ The MCP server is hosted at `https://localhost:5001/mcp` using Streamable HTTP t
 }
 ```
 
-Set the environment variable: `export JARVIS_TOKEN="jrv_a3Bx9k..."`
+Set the environment variable in PowerShell: `$env:JARVIS_TOKEN = "jrv_a3Bx9k..."`
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
@@ -152,7 +156,7 @@ Set the environment variable: `export JARVIS_TOKEN="jrv_a3Bx9k..."`
 ## 9. Run Tests
 
 ```bash
-dotnet test Jarvis.sln
+dotnet test src/Jarvis.sln
 ```
 
 Individual test projects:
@@ -163,7 +167,7 @@ dotnet test tests/Jarvis.Web.Tests
 dotnet test tests/Jarvis.Mcp.Tests
 ```
 
-Integration tests use LocalDB and do not require Docker or external services.
+Integration tests use LocalDB and do not require a separate database server. End-to-end auth flows still require local Keycloak or an approved development OIDC provider.
 
 ## Common Tasks
 
@@ -193,7 +197,7 @@ curl -X POST https://localhost:5001/api/v1/users \
 curl -X PATCH https://localhost:5001/api/v1/applications/APP1 \
   -H "Authorization: Bearer $JARVIS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"status": "maintenance", "source": "manual_update"}'
+  -d '{"status": "dormant", "source": "manual_review"}'
 ```
 
 ### Revoke a token
@@ -208,9 +212,9 @@ curl -X DELETE https://localhost:5001/api/v1/users/me/tokens/1 \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ConnectionStrings__DefaultConnection` | No | LocalDB | SQL Server connection string |
-| `Authentication__Authority` | Yes | - | KeyCloak realm URL |
-| `Authentication__ClientId` | Yes | - | OIDC client ID |
-| `Authentication__ClientSecret` | In Prod | - | OIDC client secret (confidential client) |
+| `Authentication__Authority` | No | `http://localhost:8080/realms/jarvis` (from template) | Keycloak realm URL or approved dev OIDC authority |
+| `Authentication__ClientId` | No | `jarvis-api` (from template) | OIDC client ID |
+| `Authentication__ClientSecret` | No | - | Required only for confidential clients; supply via environment variable or secret manager, never in `appsettings` |
 | `ASPNETCORE_ENVIRONMENT` | No | `Production` | Runtime environment |
 
 ## Project Structure Quick Reference
@@ -220,7 +224,7 @@ src/Jarvis.Api/          -> ASP.NET Core API + Blazor WASM host + MCP (Streamabl
 src/Jarvis.Web/          -> Blazor WebAssembly frontend
 src/Jarvis.Shared/       -> Shared models and DTOs
 tests/                   -> xUnit + bUnit tests
-deploy/                  -> docker-compose.yml (KeyCloak) + install.ps1 (production)
+deploy/                  -> docker-compose.yml (Keycloak) + install.ps1 (production)
 azure-pipelines.yml      -> Azure DevOps CI/CD pipeline
 ```
 
@@ -228,10 +232,10 @@ azure-pipelines.yml      -> Azure DevOps CI/CD pipeline
 
 **"Access Denied" after login**: Your email is not provisioned in the system. If this is a fresh deployment, the first user should automatically become admin. Check that the database migration has run.
 
-**"Connection refused" to KeyCloak**: Ensure the KeyCloak container is running: `docker compose -f deploy/docker-compose.yml ps`
+**"Connection refused" to Keycloak**: Ensure the Keycloak container is running: `docker compose -f deploy/docker-compose.yml ps`
 
 **Cannot connect to LocalDB**: Verify LocalDB is installed: `sqllocaldb info MSSQLLocalDB`. If the instance doesn't exist, create it: `sqllocaldb create MSSQLLocalDB`. Start it: `sqllocaldb start MSSQLLocalDB`.
 
-**Migration fails**: Ensure the .NET EF Core tools are installed: `dotnet tool install --global dotnet-ef`. Verify the connection string in `appsettings.Development.json` points to your LocalDB instance.
+**Migration fails**: Ensure `dotnet tool restore` completed successfully and that the connection string in `appsettings.Development.json` points to your LocalDB instance.
 
 **WASM not loading**: Clear browser cache. Blazor WASM downloads .NET assemblies which can be aggressively cached.

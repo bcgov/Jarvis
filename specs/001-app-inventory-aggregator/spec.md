@@ -75,7 +75,7 @@ An AI assistant or automation tool connects to the MCP (Model Context Protocol) 
 
 ### User Story 4 - Administer User Roles and Accounts (Priority: P2)
 
-An administrator manages user accounts and roles within the application. Administrators can pre-populate user accounts (using email as the unique identifier) before users first log in, assigning them one of three roles: administrator, maintainer, or reader. Users who authenticate via corporate SSO without a pre-assigned role are denied access. Role assignments control what actions each user can perform.
+An administrator manages user accounts and roles within the application. Administrators can pre-populate user accounts (using email as the unique identifier) before users first log in, assign them one of three roles (administrator, maintainer, or reader), and deactivate accounts when access should be removed. Users who authenticate via corporate SSO without a pre-assigned role are denied access after the initial bootstrap case has been completed. Role assignments control what actions each user can perform.
 
 **Why this priority**: Role-based access control ensures data integrity by preventing unauthorized modifications. Users must be explicitly provisioned by an administrator before they can access the system, ensuring only authorized personnel gain entry.
 
@@ -83,13 +83,14 @@ An administrator manages user accounts and roles within the application. Adminis
 
 **Acceptance Scenarios**:
 
-1. **Given** a user authenticates via SSO for the first time, **When** they have no pre-assigned role in the system, **Then** they are shown an "Access Denied" message and cannot access any application features.
+1. **Given** at least one user already exists in the system, **When** a user authenticates via SSO for the first time and has no pre-assigned role, **Then** they are shown an "Access Denied" message and cannot access any application features.
 2. **Given** an administrator is logged in, **When** they assign the maintainer role to a user, **Then** that user can make API updates on subsequent requests.
 3. **Given** a user with reader role, **When** they attempt to call a write API endpoint, **Then** the request is rejected with an authorization error.
 4. **Given** an administrator views the user management screen, **When** they search for a user, **Then** they see the user's current role and can modify it.
 5. **Given** an administrator is on the user management screen, **When** they pre-populate a new user account by entering an email address and selecting a role, **Then** the account is created and ready for the user's first SSO login.
 6. **Given** an administrator or automated system uses the API, **When** they submit a bulk user provisioning request with email addresses and roles, **Then** the user accounts are created and ready for first SSO login.
 7. **Given** the system has just been deployed with no users, **When** the first user authenticates via SSO, **Then** they are automatically assigned the administrator role (bootstrapping).
+8. **Given** an administrator deactivates a user account, **When** that user later authenticates via SSO or presents an existing Personal Access Token, **Then** access is denied and all of that user's active Personal Access Tokens are revoked.
 
 ---
 
@@ -116,10 +117,10 @@ The system tracks where each piece of application data originated. When the same
 - How does the system behave when the API receives an update for an application acronym that does not yet exist? The system creates a new application record (upsert behavior).
 - What happens when a data source submits an application with an acronym that matches an existing record but a different name? The name is updated (last-write-wins) and the change is tracked in the source history with both the old and new values.
 - What happens when the system is deployed for the first time and no users exist? The first user to authenticate via SSO is automatically assigned the administrator role (bootstrapping), enabling them to provision other users.
-- What happens when an administrator attempts to demote or remove the last administrator account? The system prevents the operation and returns an error indicating at least one administrator must exist at all times.
+- What happens when an administrator attempts to demote or deactivate the last administrator account? The system prevents the operation and returns an error indicating at least one administrator must exist at all times.
 - What happens when an administrator attempts to delete an application? Applications cannot be permanently deleted; they can only be marked as "retired" (soft delete). This preserves audit history and data provenance.
 - What happens when two API clients simultaneously update different fields of the same application? The system performs field-level merge — non-overlapping fields are merged automatically; only conflicting fields (same field updated by both) are rejected with a conflict error.
-- What happens when a user authenticates via SSO but has no pre-assigned role? They are shown an "Access Denied" message and cannot access the system. An administrator must pre-populate their account with a role before they can gain access.
+- What happens when a user authenticates via SSO but has no pre-assigned role after bootstrap is complete? They are shown an "Access Denied" message and cannot access the system. An administrator must pre-populate their account with a role before they can gain access.
 
 ## Requirements *(mandatory)*
 
@@ -127,11 +128,11 @@ The system tracks where each piece of application data originated. When the same
 
 - **FR-001**: System MUST authenticate users via corporate SSO as the sole authentication mechanism for the web UI.
 - **FR-002**: System MUST enforce role-based access control with three roles: administrator (full access including user management), maintainer (can create and update application records via API/MCP), and reader (view-only access).
-- **FR-003**: System MUST deny access to users who authenticate via SSO but have no pre-assigned role, displaying an "Access Denied" message. Users must be explicitly provisioned by an administrator before gaining access.
+- **FR-003**: System MUST deny access to users who authenticate via SSO but have no pre-assigned role, displaying an "Access Denied" message, except when no user accounts yet exist and FR-018 bootstrap applies. Users must otherwise be explicitly provisioned by an administrator before gaining access.
 - **FR-004**: System MUST provide a read-only user interface that displays the consolidated application inventory with search, filter, and sort capabilities.
 - **FR-005**: System MUST provide an API that allows authenticated clients with maintainer or administrator roles to create and update application records.
 - **FR-006**: System MUST provide an MCP server that exposes tools for querying and updating the application inventory.
-- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown/maintenance), data sources, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
+- **FR-007**: System MUST store the following fields for each application: acronym, name, ministry, branch, technologies (free-text tags with auto-suggest from existing values), hosting details, status (active/dormant/retired/unknown), data sources, last activity date, URLs (per-environment app URLs, source code repository, CI/CD link), contacts (business owner, technical lead), critical system flag, notes, and known risks and vulnerabilities.
 - **FR-008**: System MUST validate that required fields are provided when creating or updating application records and return clear error messages for invalid submissions.
 - **FR-009**: System MUST track the data source origin for each application record and field update.
 - **FR-010**: System MUST update the "last activity" timestamp whenever an application record is modified.
@@ -144,22 +145,23 @@ The system tracks where each piece of application data originated. When the same
 - **FR-017**: System MUST allow multiple URLs per application, organized by environment (e.g., development, staging, production).
 - **FR-018**: System MUST automatically assign the administrator role to the first authenticated user when no user accounts exist in the system (bootstrapping).
 - **FR-019**: System MUST allow administrators to pre-populate user accounts by specifying an email address and role, via both the web UI (user management screen) and the API (for bulk/automated provisioning).
-- **FR-020**: System MUST prevent the demotion or removal of the last administrator account to avoid an unrecoverable state where no one can manage users.
+- **FR-020**: System MUST prevent the demotion or deactivation of the last administrator account to avoid an unrecoverable state where no one can manage users.
 - **FR-021**: System MUST enforce soft delete for applications — applications can only be marked as "retired" and cannot be permanently removed through the application, preserving audit history.
 - **FR-022**: System MUST provide auto-suggest functionality for the technologies field, suggesting existing tag values as users or API clients enter new values.
 - **FR-023**: System MUST authenticate MCP server connections using the same token-based authentication mechanism as the REST API (shared identity provider).
 - **FR-024**: System MUST allow any authenticated user to create self-service Personal Access Tokens (PATs) for API and MCP authentication. PATs are stable credentials that do not require browser-based OAuth flows.
 - **FR-025**: System MUST enforce a maximum lifetime of 90 days for Personal Access Tokens. Users set an expiry up to this limit at creation time.
 - **FR-026**: System MUST store only the SHA-256 hash of each PAT. The plaintext token is shown once at creation time and cannot be retrieved again.
-- **FR-027**: System MUST allow users to revoke their own tokens and allow administrators to revoke any user's tokens. Revocation is immediate and irreversible.
+- **FR-027**: System MUST allow users to revoke their own tokens and allow administrators to revoke any user's active tokens, including revoking all active tokens for offboarding or incident response. Revocation is immediate and irreversible.
 - **FR-028**: System MUST limit each user to a maximum of 10 active (non-expired, non-revoked) Personal Access Tokens.
 - **FR-029**: System MUST resolve the user's current role on each PAT-authenticated request (not a cached role from token creation time). If a user's role changes, existing PATs immediately reflect the new permissions.
+- **FR-030**: System MUST allow administrators to deactivate user accounts. Deactivated users cannot access the web UI or use PAT-authenticated API or MCP operations, and their active PATs are revoked immediately.
 
 ### Key Entities
 
 - **Application**: The central entity representing a tracked software application. Contains all inventory fields (acronym, name, ministry, branch, technologies, hosting, status, URLs, contacts, critical flag, notes, risks). Uniquely identified by acronym. Cannot be permanently deleted; can only be marked "retired" (soft delete).
 - **Data Source**: Represents an origin system or feed that provides application inventory data. Tracks which source provided each piece of information and when.
-- **User**: A person who has authenticated via corporate SSO. Uniquely identified by email address. Has an assigned role (administrator, maintainer, or reader) that determines their permissions within the system. Users must be pre-populated by an administrator before they can access the system (except for the bootstrapping case where the first user becomes admin).
+- **User**: A person who has authenticated via corporate SSO. Uniquely identified by email address. Has an assigned role (administrator, maintainer, or reader) that determines their permissions within the system. Users must be pre-populated by an administrator before they can access the system (except for the bootstrapping case where the first user becomes admin). Administrators can deactivate users to remove access without deleting their audit history.
 - **Contact**: A person associated with an application in a specific capacity (business owner, technical lead, or other custom roles). Contains name and contact information.
 - **Risk/Vulnerability**: A known risk or vulnerability associated with an application. Contains description and any relevant notes about mitigation or impact.
 - **Environment URL**: A URL associated with a specific deployment environment (development, staging, production) for an application.
@@ -191,5 +193,5 @@ The system tracks where each piece of application data originated. When the same
 - Mobile-responsive design is expected but a dedicated mobile application is out of scope for the initial version.
 - Data retention follows the organization's standard records management policies.
 - The initial deployment target is an internal corporate network accessible to all employees.
-- Users must be explicitly pre-provisioned by an administrator (with email and role) before they can access the system. There is no default role assignment for unknown users.
+- Users must be explicitly pre-provisioned by an administrator (with email and role) before they can access the system after the initial bootstrap administrator exists. There is no default role assignment for unknown users.
 - The first authenticated user on a fresh deployment is automatically granted administrator privileges (bootstrapping), after which all other users must be pre-provisioned.
